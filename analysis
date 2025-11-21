@@ -1,0 +1,379 @@
+library(readxl)
+cts <- read_excel("./Rating CCMT crime threat scenarios.xlsx", 
+                  skip = 2)
+# View(cts)
+
+library(data.table)
+
+setDT(cts)
+str(cts)
+
+
+# GET NAMES OF CRIME THREAT SCENARIOS
+library(stringr)
+
+scenes <- names(cts[,4:length(cts)])
+scenes <- unique(str_match(scenes, "^(.*?):"))[1:35]
+scenes <- gsub("\\s\\((.*?)$", "", scenes)
+scenes <- gsub(":", "", scenes)
+
+
+# SUBSET EACH RATING TYPE
+library(dplyr)
+
+# HARM RATINGS
+harm <- subset(cts, select = grepl("Harm", colnames(cts)))
+
+# DEFEATIBILITY RATINGS
+defeat <- subset(cts, select = grepl("Defeat-ability", colnames(cts)))
+
+# FREQ RATINGS
+freq <- subset(cts, select = grepl("Frequency", colnames(cts)))
+
+# ACHIEVABILITY RATINGS
+achiev <- subset(cts, select = grepl("Achievability", colnames(cts)))
+
+
+# SCALE RATINGS BY CONFIDENCE
+cts_scaled <- data.table()
+
+for(scene in scenes){
+  print(scene)
+  
+  h <- subset(harm, select = grepl(scene, colnames(harm)))
+  h_conf <- mean(h[[1]] * h[[2]] / 10, na.rm=T)
+  
+  f <- subset(freq, select = grepl(scene, colnames(freq)))
+  f_conf <- mean(f[[1]] * f[[2]] / 10, na.rm=T)
+  
+  d <- subset(defeat, select = grepl(scene, colnames(defeat)))
+  d_conf <- mean(d[[1]] * d[[2]] / 10, na.rm=T)
+  d_conf_rev <- mean((10-d[[1]]) * d[[2]] / 10, na.rm=T)
+  
+  a <- subset(achiev, select = grepl(scene, colnames(achiev)))
+  a_conf <- mean(a[[1]] * a[[2]] / 10, na.rm=T)
+  
+  tmp <- data.table("Crime threat scenario" = scene,
+                    "Harm" = mean(h[[1]], na.rm=T),
+                    "Harm (scaled)" = h_conf,
+                    "Defeatability" = mean(d[[1]], na.rm=T),
+                    "Defeatability (scaled)" = d_conf,
+                    "Defeatability (reverse-coded, scaled)" = d_conf_rev,
+                    "Frequency" = mean(f[[1]], na.rm=T),
+                    "Frequency (scaled)" = f_conf,
+                    "Achievability" = mean(a[[1]], na.rm=T),
+                    "Achievability (scaled)" =  a_conf,
+                    "Pooled confidence" = mean(c(h_conf, f_conf)),
+                    "Pooled confidence (h x d rev)" = mean(c(h_conf, d_conf_rev)),
+                    "Pooled confidence (h x d)" = mean(c(h_conf, d_conf)))
+  cts_scaled <- rbindlist(list(cts_scaled, tmp))
+}
+
+cts_scaled$Risk <- cts_scaled$`Harm (scaled)` * cts_scaled$`Frequency (scaled)`
+
+cts_scaled
+
+
+# TEST WHETHER DIMENSION RATING HIGHER THAN GROUP AVERAGE
+tests <- data.table()
+
+for(scene in scenes){
+  print(scene)
+  
+  h <- subset(harm, select = grepl(scene, colnames(harm)))
+  h_conf <- h[[1]] * h[[2]] / 10
+  t_h <- t.test(h_conf, alternative = "g", mu = mean(cts_scaled$`Harm (scaled)`))
+  
+  f <- subset(freq, select = grepl(scene, colnames(freq)))
+  f_conf <- f[[1]] * f[[2]] / 10
+  t_f <- t.test(f_conf, alternative = "g", mu = mean(cts_scaled$`Frequency (scaled)`))
+  
+  d <- subset(defeat, select = grepl(scene, colnames(defeat)))
+  d_conf <- d[[1]] * d[[2]] / 10
+  t_d <- t.test(d_conf, alternative = "l", mu = mean(cts_scaled$`Defeatability (scaled)`))
+  
+  a <- subset(achiev, select = grepl(scene, colnames(achiev)))
+  a_conf <- a[[1]] * a[[2]] / 10
+  t_a <- t.test(a_conf, alternative = "g", mu = mean(cts_scaled$`Achievability (scaled)`))
+  
+  tmp <- data.table("Crime threat scenario" = scene,
+                    "harm_t_stat" = t_h$statistic[[1]],
+                    "harm_t_p" = t_h$p.value,
+                    "freq_t_stat" = t_f$statistic[[1]],
+                    "freq_t_p" = t_f$p.value,
+                    "defeat_t_stat" = t_d$statistic[[1]],
+                    "defeat_t_p" = t_d$p.value,
+                    "achiev_t_stat" = t_a$statistic[[1]],
+                    "achiev_t_p" = t_a$p.value)
+  
+  tests <- rbindlist(list(tests, tmp))
+}
+
+
+# PLOT RATINGS
+library(ggplot2)
+
+# HEATMAP MAIN FOUR RATINGS
+cts_scaled <- cts_scaled[order(cts_scaled$`Crime threat scenario`, decreasing = T)]
+cts_scaled$cts <- c("Non-carbon credit frauds",
+                     "Carbon credit frauds",
+                     "Money laundering",
+                     "Carbon and energy market abuse and manipulation",
+                     "Greenwashing or disinformation",
+                     "Corrupt practices",
+                     "Stalking and harassments",
+                     "Handling of stolen goods ",
+                     "Sabotage and criminal damage",
+                     "Illegal occupation and control of critical resources",
+                     "Blackmail or extortion",
+                     "Vandalism",
+                     "Tax fraud and tax avoidance",
+                     "Theft of technology, materials or energy",
+                     "Public order offences",
+                     "Territorial conflict",
+                     "Terrorism",
+                     "Dispossession and displacement",
+                     "Human trafficking",
+                     "Slavery, forced and illegal labour",
+                     "Child labour",
+                     "Illegal fishing in blue carbon zones",
+                     "Illicit disposal and handling of waste, energy, material or technologies",
+                     "Computer misuse to breach, intercept or tamper with data or systems",
+                     "Illegal trade and smuggling of natural resources",
+                     "Illegal extraction of natural resources",
+                     "Water insecurity",
+                     "Accidents, attacks and harms related to nuclear energy",
+                     "Environmental harm from mining activity",
+                     "Environmental harm from CCUS",
+                     "Renewable energy projects harm",
+                     "Forgery/counterfeiting",
+                     "Obtaining services dishonestly ",
+                     "Intellectual property infringements",
+                     "Computer misuse to enable other offences")
+
+
+# cts_scaled_long <- melt(cts_scaled[,c(1,3,5,8,10)], id.vars = "Crime threat scenario", value.name = "Average rating")
+# cts_scaled_long$`Crime threat scenario` <- factor(cts_scaled_long$`Crime threat scenario`, levels = unique(cts_scaled_long$`Crime threat scenario`))
+cts_scaled_long <- melt(cts_scaled[,c(3,5,8,10,15)], id.vars = "cts", value.name = "Average rating")
+cts_scaled_long$cts <- factor(cts_scaled_long$cts, levels = unique(cts_scaled_long$cts))
+
+label_harm <- ifelse(cts_scaled_long[variable == "Harm (scaled)", "Average rating"] > 5.56, paste(round(cts_scaled_long[variable == "Harm (scaled)"]$'Average rating', 2), "*"), round(cts_scaled_long[variable == "Harm (scaled)",]$'Average rating', 2))
+label_freq <- ifelse(cts_scaled_long[variable == "Frequency (scaled)", "Average rating"] > 4.7, paste(round(cts_scaled_long[variable == "Frequency (scaled)"]$'Average rating', 2), "*"), round(cts_scaled_long[variable == "Frequency (scaled)",]$'Average rating', 2))
+label_achiev <- ifelse(cts_scaled_long[variable == "Achievability (scaled)", "Average rating"] > 5.3, paste(round(cts_scaled_long[variable == "Achievability (scaled)"]$'Average rating', 2), "*"), round(cts_scaled_long[variable == "Achievability (scaled)",]$'Average rating', 2))
+label_defeat <- ifelse(cts_scaled_long[variable == "Defeatability (scaled)", "Average rating"] < 2.5, paste(round(cts_scaled_long[variable == "Defeatability (scaled)"]$'Average rating', 2), "*"), round(cts_scaled_long[variable == "Defeatability (scaled)",]$'Average rating', 2))
+
+sig_labels <- c(label_harm, label_defeat, label_freq, label_achiev)
+
+ggplot(cts_scaled_long, aes(cts_scaled_long$cts, variable)) +
+  geom_tile(aes(fill = cts_scaled_long$`Average rating`)) + coord_flip() +
+  scale_fill_gradient(low = "white", high = "red") + theme_classic() +
+  geom_text(aes(label = sig_labels)) +
+  theme(legend.position = "None", axis.text.x = element_text(size = 12)) +
+  ylab("") + xlab("") + ggtitle("Confidence-weighted rating averages per crime threat scenario") +
+  scale_y_discrete(label = c("Harm", "Defeatability", "Frequency", "Achievability"))
+
+
+# POINT PLOT WEIGHTED AVERAGED HARM & FREQ SCORES
+install.packages("ggrepel")
+library(ggrepel)
+library(RColorBrewer)
+
+cts_scaled_long2 <- melt(cts_scaled[,c(3,5,8,10,12,13,15)], id.vars = "cts", value.name = "Average rating")
+
+colourCount <- length(scenes)
+getPalette <- colorRampPalette(brewer.pal(9, "Set1"))
+
+
+# add labels for 80th percentile and up risk
+ggplot(cts_scaled, aes(x=cts_scaled$`Harm (scaled)`, y=cts_scaled$`Frequency (scaled)`, colour=cts_scaled$cts)) +
+  geom_point(aes(size=cts_scaled$`Pooled confidence`)) +
+  geom_text_repel(aes(label=ifelse(percent_rank(cts_scaled$Risk) >= .8, cts_scaled$cts,'')), point.padding = 10) +
+  scale_color_manual(values = getPalette(colourCount)) +
+  ggtitle("Expert-rated risk of each crime threat scenario") + theme_bw() + theme(legend.position = 'None', text = element_text(size = 20)) +
+  ylab("Frequency (confidence-weighted mean)") + xlab("Harm (confidence-weighted mean)") 
+
+# POINT PLOT HARM AND DEFEATIBILITY --> CRIME THREATS TO PRIORITISE RESEARCHING
+ggplot(cts_scaled, aes(x=cts_scaled$`Harm (scaled)`, y=cts_scaled$`Defeatability (scaled)`, colour=cts_scaled$cts)) +
+  geom_point(aes(size=cts_scaled$`Pooled confidence (h x d)`)) +
+  geom_text_repel(aes(label=ifelse(((cts_scaled$`Harm (scaled)` > mean(cts_scaled$`Harm (scaled)`)) & (cts_scaled$`Defeatability (scaled)` < mean(cts_scaled$`Defeatability (scaled)`))), cts_scaled$cts,'')), point.padding = 2) +
+  scale_color_manual(values = getPalette(colourCount)) +
+  ggtitle("Expert-rated least defeatable and most harmful crime threat scenarios") + theme_bw() + theme(legend.position = 'None', text = element_text(size = 20)) +
+  ylab("Defeatability (confidence-weighted mean)") + xlab("Harm (confidence-weighted mean)") 
+
+# SAVE DATA
+write.csv(cts_scaled, "ccmt_cts_scaled_ratings.csv")
+write.csv(tests, "ccmt_cts_ttests_scaled.csv")
+
+
+#######
+
+cm <- read_excel("./Rating CCMT countermeasures.xlsx", 
+                 skip = 2)
+# View(cm)
+setDT(cm)
+
+# GET NAMES OF COUNTERMEASURES
+counters <- names(cm[,4:length(cm)])
+counters <- unique(str_match(counters, "^(.*?):"))[1:36]
+counters <- gsub("\\s\\((.*?)$", "", counters)
+
+# HARM RATINGS
+scope <- subset(cm, select = grepl(": Scope", colnames(cm)))
+
+# DEFEATIBILITY RATINGS
+defeat <- subset(cm, select = grepl(": Defeat-ability", colnames(cm)))
+
+# FREQ RATINGS
+feas <- subset(cm, select = grepl(": Feasibiility", colnames(cm)))
+
+# ACHIEVABILITY RATINGS
+effec <- subset(cm, select = grepl(": Effectiveness", colnames(cm)))
+
+
+# GET CONFIDENCE-WEIGHTED AVERAGES
+cm_scaled <- data.table()
+
+for(counter in counters){
+  print(counter)
+  
+  h <- subset(scope, select = grepl(counter, colnames(scope)))
+  h_conf <- mean(h[[1]] * h[[2]] / 10, na.rm=T) 
+  
+  f <- subset(feas, select = grepl(counter, colnames(feas)))
+  f_conf <- mean(f[[1]] * f[[2]] / 10, na.rm=T)
+  
+  d <- subset(defeat, select = grepl(counter, colnames(defeat)))
+  d_conf <- mean(d[[1]] * d[[2]] / 10, na.rm=T)
+  
+  a <- subset(effec, select = grepl(counter, colnames(effec)))
+  a_conf <- mean(a[[1]] * a[[2]] / 10, na.rm=T)
+  
+  tmp <- data.table("Countermeasure" = counter,
+                    "Scope (scaled)" =  h_conf,
+                    "Defeatability (scaled)" =  d_conf,
+                    "Feasibility (scaled)" =  f_conf,
+                    "Effectiveness (scaled)" =  a_conf,
+                    "Pooled confidence" = mean(c(f_conf, a_conf))
+  )
+  cm_scaled <- rbindlist(list(cm_scaled, tmp))
+}
+
+cm_scaled
+
+
+# TEST IF CONFIDENCE-WEIGHTED AVERAGE IS DIFFERENT FROM GROUP AVERAGE FOR EACH DIMENSION
+tests <- data.table()
+
+for(counter in counters){
+  print(counter)
+  
+  h <- subset(scope, select = grepl(counter, colnames(scope)))
+  h_conf <- h[[1]] * h[[2]] / 10
+  t_h <- t.test(h_conf, alternative = "g", mu = mean(cm_scaled$`Scope (scaled)`))
+  
+  f <- subset(effec, select = grepl(counter, colnames(effec)))
+  f_conf <- f[[1]] * f[[2]] / 10
+  t_f <- t.test(f_conf, alternative = "g", mu = mean(cm_scaled$`Effectiveness (scaled)`))
+  
+  d <- subset(defeat, select = grepl(counter, colnames(defeat)))
+  d_conf <- d[[1]] * d[[2]] / 10
+  t_d <- t.test(d_conf, alternative = "l", mu = mean(cm_scaled$`Defeatability (scaled)`))
+  
+  a <- subset(feas, select = grepl(counter, colnames(feas)))
+  a_conf <- a[[1]] * a[[2]] / 10
+  t_a <- t.test(a_conf, alternative = "g", mu = mean(cm_scaled$`Feasibility (scaled)`))
+  
+  tmp <- data.table("Countermeasure" = counter,
+                    "scope_t_stat" = t_h$statistic[[1]],
+                    "scope_t_p" = t_h$p.value,
+                    "effec_t_stat" = t_f$statistic[[1]],
+                    "effec_t_p" = t_f$p.value,
+                    "defeat_t_stat" = t_d$statistic[[1]],
+                    "defeat_t_p" = t_d$p.value,
+                    "feas_t_stat" = t_a$statistic[[1]],
+                    "feas_t_p" = t_a$p.value)
+  
+  tests <- rbindlist(list(tests, tmp))
+}
+
+# inspect statistical significance
+round(tests[,2:length(tests)], 3)
+
+# shortening countermeasure descriptions
+cm_scaled$cm <- c("Economic policies to improve the fairness and integrity of the energy market",  
+                   "Technology and industry regulation",
+                   "Policies for the security of and equal access to natural resources",
+                   "Environmental law and monitoring/enforcement systems",
+                   "Radio-frequency directed energy weapon to disrupt criminal drone activities",
+                   "Developing CCMTs with less valuable materials",
+                   "Voluntary or mandatory security-by-design approaches",
+                   "Fair compensation for individuals/communities affected by CCMT projects",
+                   "Tag-and-tracing of CCMTs, natural resources and financial/legal instruments",
+                   "Obfuscation of open-source mapping of CCMT installations",
+                   "Data collection and sharing for research, policymaking, prevention or investigation",
+                   "Central information dashboard for government about the decentralised grid",
+                   "Risk assessment and management",
+                   "Physical security measures",
+                   "Education and training programs for users and developers of CCMTs",
+                   "Semi-formal surveillance",
+                   "Incorporating indigenous knowledge in managing or securing CCMTs",
+                   "Awareness-raising, public engagement and information",
+                   "Public-private collaboration in the development and operation of CCMTs",
+                   "Crime risk assessment of policies and laws",
+                   "Improved criminal legislation",
+                   "Allocation of part of the budget for government subsidy schemes to fraud detection/prevention",
+                   "Accreditation and quality/security certification schemes",
+                   "Specialised independent regulators/auditors and regulatory coordination",
+                   "Decentralising energy system",
+                   "Critical mineral waste recovery policies",
+                   "Increased law enforcement and specialisation",
+                   "Legal frameworks to allow evidence ollection from unmanned drones",
+                   "International sanctions and bans",
+                   "International cooperation, commitment and assurances",
+                   "International law and bodies",
+                   "Regional, national or international policies/laws to define and protect critical infrastructure",
+                   "Policies and regulation to improve institutional quality, good governance and the rule of law",
+                   "(Inter)national legal structures and frameworks to define and prevent tax avoidance",
+                   "Policies and laws to protect human rights of labour force",
+                   "Cybersecurity measures")
+
+# SAVE DATA
+write.csv(cm_scaled, "cm_scaled_ratings.csv")
+write.csv(tests, "cm_ttests_scaled.csv")
+
+
+# PLOT COUNTERMEASURES HEATMAP 
+# cm_scaled$Countermeasure <- tmpcm$Countermeasure
+cm_scaled <- cm_scaled[order(cm_scaled$Countermeasure, decreasing = T)]
+
+cm_scaled_long <- melt(cm_scaled[,c(2,3,4,5,7)], id.vars = "cm", value.name = "Average rating")
+cm_scaled_long$Countermeasure <- factor(cm_scaled_long$cm, levels = unique(cm_scaled_long$cm))
+
+label_scope <- ifelse(cm_scaled_long[variable == "Scope (scaled)", "Average rating"] > 5.7, paste(round(cm_scaled_long[variable == "Scope (scaled)"]$'Average rating', 2), "*"), round(cm_scaled_long[variable == "Scope (scaled)",]$'Average rating', 2))
+label_defeat <- ifelse(cm_scaled_long[variable == "Defeatability (scaled)", "Average rating"] < 2.8, paste(round(cm_scaled_long[variable == "Defeatability (scaled)"]$'Average rating', 2), "*"), round(cm_scaled_long[variable == "Defeatability (scaled)",]$'Average rating', 2))
+label_feas <- ifelse(cm_scaled_long[variable == "Feasibility (scaled)", "Average rating"] > 4.9, paste(round(cm_scaled_long[variable == "Feasibility (scaled)"]$'Average rating', 2), "*"), round(cm_scaled_long[variable == "Feasibility (scaled)",]$'Average rating', 2))
+label_effec <- ifelse(cm_scaled_long[variable == "Effectiveness (scaled)", "Average rating"] > 4.6, paste(round(cm_scaled_long[variable == "Effectiveness (scaled)"]$'Average rating', 2), "*"), round(cm_scaled_long[variable == "Effectiveness (scaled)",]$'Average rating', 2))
+
+sig_labels <- c(label_scope, label_defeat, label_feas, label_effec)
+
+ggplot(cm_scaled_long, aes(cm_scaled_long$cm, variable)) +
+  geom_tile(aes(fill = cm_scaled_long$`Average rating`)) + coord_flip() +
+  geom_text(aes(label = sig_labels)) +
+  scale_fill_gradient(low = "white", high = "blue") + theme_classic() +
+  theme(legend.position = "None", axis.text.x = element_text(size=12)) + 
+  ylab("") + xlab("") + ggtitle("Confidence-weighted rating averages per countermeasure") +
+  scale_y_discrete(label = c("Scope", "Defeatability", "Feasibility", "Effectiveness"))
+
+
+# PLOT LOW-HANGING FRUIT FOR COUNTERMEASURE DEVELOPMENT
+cm_scaled$QuickWins <- cm_scaled$`Feasibility (scaled)` * cm_scaled$`Effectiveness (scaled)`
+
+colourCount = length(counters)
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+ggplot(cm_scaled, aes(x=cm_scaled$`Feasibility (scaled)`, y=cm_scaled$`Effectiveness (scaled)`, colour=cm_scaled$cm)) +
+  geom_point(aes(size=cm_scaled$`Pooled confidence`)) +
+  geom_text_repel(aes(label=ifelse(percent_rank(cm_scaled$QuickWins) > .8, cm_scaled$cm,'')), point.padding = 15) +
+  scale_color_manual(values = getPalette(colourCount)) +
+  ggtitle("Low-hanging fruit countermeasures") + theme_bw() + theme(legend.position = 'None', text = element_text(size=20)) +
+  ylab("Effectiveness\n(confidence-weighted mean)") +  xlab("Feasibility\n(confidence-weighted mean)")
